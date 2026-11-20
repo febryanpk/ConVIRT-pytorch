@@ -17,7 +17,7 @@ from models.model import ModelCLR
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-torch.manual_seed(0)
+torch.manual_seed(42)
 
 
 def _save_config_file(model_checkpoints_folder):
@@ -61,8 +61,13 @@ class SimCLR(object):
             weight_decay=eval(self.config["weight_decay"]),
         )
 
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=len(train_loader), eta_min=0, last_epoch=-1
+        # # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+        #                                                         T_max=len(train_loader), b
+        #                                                         eta_min=0,
+        #                                                         last_epoch=-1)
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, "min", factor=0.5, patience=5
         )
 
         scaler = GradScaler()
@@ -78,8 +83,10 @@ class SimCLR(object):
         best_valid_loss = np.inf
 
         print("Training...")
-
-        for epoch_counter in range(self.config["epochs"]):
+        model.train()
+        for epoch_counter in range(1, (self.config["epochs"] + 1)):
+            epoch_loss = 0.0
+            train_counter = 0
             # print(f'Epoch {epoch_counter}')
             for xis, xls in tqdm(train_loader):
                 optimizer.zero_grad()
@@ -109,9 +116,6 @@ class SimCLR(object):
 
                     # loss = self._step(model_res, model_bert, xis, xls, n_iter)
 
-                if n_iter % self.config["log_every_n_steps"] == 0:
-                    self.writer.add_scalar("train_loss", loss, global_step=n_iter)
-
                 # Scales the loss to create scaled gradients
                 scaler.scale(loss).backward()
 
@@ -123,13 +127,28 @@ class SimCLR(object):
 
                 # Update the scale for next iteration
                 scaler.update()
-                n_iter += 1
+                # n_iter += 1
+                epoch_loss += loss.item()
+                train_counter += 1
 
-            print(f"Epoch {epoch_counter} ------ Train Loss: {loss}")
+            # Calculate avg loss for the epoch
+            epoch_loss /= train_counter
+
+            # Log training loss
+            self.writer.add_scalar("train_loss", epoch_loss, global_step=epoch_counter)
+
+            # Log lr
+            current_lr = optimizer.param_groups[0]["lr"]
+            self.writer.add_scalar(
+                "lr_decay_on_plateau", current_lr, global_step=epoch_counter
+            )
+
+            print(f"Epoch {epoch_counter} ------ Train Loss: {epoch_loss}")
 
             # validate the model if requested
             if epoch_counter % self.config["eval_every_n_epochs"] == 0:
                 valid_loss = self._validate(model, valid_loader, n_iter)
+                scheduler.step(valid_loss)
                 if valid_loss < best_valid_loss:
                     # save the model weights
                     best_valid_loss = valid_loss
@@ -138,19 +157,10 @@ class SimCLR(object):
                         os.path.join(model_checkpoints_folder, "model.pth"),
                     )
                 self.writer.add_scalar(
-                    "validation_loss", valid_loss, global_step=valid_n_iter
+                    "validation_loss", valid_loss, global_step=epoch_counter
                 )
                 valid_n_iter += 1
                 print(f"Validation {epoch_counter} - Valid Loss: {valid_loss}")
-
-            # warmup for the first 10 epochs
-            if epoch_counter >= 10:
-                scheduler.step(valid_loss)
-            self.writer.add_scalar(
-                "cosine_lr_decay",
-                scheduler.get_last_lr()[0],
-                global_step=n_iter,
-            )
 
     def _load_pre_trained_weights(self, model):
         try:

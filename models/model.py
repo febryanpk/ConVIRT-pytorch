@@ -12,25 +12,30 @@ Reference for BERT Sentence Embeddings method
 
 """
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-import torch
 from transformers import AutoModel
+
 
 # Create the BertClassfier class
 class ModelCLR(nn.Module):
-    def __init__(self, res_base_model, bert_base_model, out_dim, freeze_layers, do_lower_case):
+    def __init__(
+        self, res_base_model, bert_base_model, out_dim, freeze_layers, do_lower_case
+    ):
         super(ModelCLR, self).__init__()
-        #init BERT
-        self.bert_model = self._get_bert_basemodel(bert_base_model,freeze_layers)
+        # init BERT
+        self.bert_model = self._get_bert_basemodel(bert_base_model, freeze_layers)
         # projection MLP for BERT model
-        self.bert_l1 = nn.Linear(768, 768) #768 is the size of the BERT embbedings
-        self.bert_l2 = nn.Linear(768, out_dim) #768 is the size of the BERT embbedings
+        self.bert_l1 = nn.Linear(768, 768)  # 768 is the size of the BERT embbedings
+        self.bert_l2 = nn.Linear(768, out_dim)  # 768 is the size of the BERT embbedings
 
         # init Resnet
-        self.resnet_dict = {"resnet18": models.resnet18(pretrained=False),
-                            "resnet50": models.resnet50(pretrained=False)}
+        self.resnet_dict = {
+            "resnet18": models.resnet18(pretrained=True),
+            "resnet50": models.resnet50(pretrained=True),
+        }
         resnet = self._get_res_basemodel(res_base_model)
         num_ftrs = resnet.fc.in_features
         self.res_features = nn.Sequential(*list(resnet.children())[:-1])
@@ -44,14 +49,21 @@ class ModelCLR(nn.Module):
             print("Image feature extractor:", res_model_name)
             return res_model
         except:
-            raise ("Invalid model name. Check the config file and pass one of: resnet18 or resnet50")
+            raise (
+                "Invalid model name. Check the config file and pass one of: resnet18 or resnet50"
+            )
 
     def _get_bert_basemodel(self, bert_model_name, freeze_layers):
         try:
-            model = AutoModel.from_pretrained(bert_model_name)#, return_dict=True)
-            print("Image feature extractor:", bert_model_name)
+            model = AutoModel.from_pretrained(bert_model_name)  # , return_dict=True)
+            print("Text feature extractor:", bert_model_name)
         except:
-            raise ("Invalid model name. Check the config file and pass a BERT model from transformers lybrary")
+            raise (
+                "Invalid model name. Check the config file and pass a BERT model from transformers lybrary"
+            )
+
+        for param in model.embeddings.parameters():
+            param.requires_grad = False
 
         if freeze_layers is not None:
             for layer_idx in freeze_layers:
@@ -59,17 +71,31 @@ class ModelCLR(nn.Module):
                     param.requires_grad = False
         return model
 
-    
     def mean_pooling(self, model_output, attention_mask):
         """
         Mean Pooling - Take attention mask into account for correct averaging
         Reference: https://www.sbert.net/docs/usage/computing_sentence_embeddings.html
         """
-        token_embeddings = model_output[0] #First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        token_embeddings = model_output[
+            0
+        ]  # First element of model_output contains all token embeddings
+        input_mask_expanded = (
+            attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        )
         sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
         sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
         return sum_embeddings / sum_mask
+
+    def max_pooling(self, model_output, attention_mask):
+        """
+        Max Pooling - Take the max value over time for every dimension.
+        """
+        token_embeddings = model_output[0]
+        input_mask_expanded = (
+            attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        )
+        token_embeddings[input_mask_expanded == 0] = -1e9
+        return torch.max(token_embeddings, 1)[0]
 
     def image_encoder(self, xis):
         h = self.res_features(xis)
@@ -90,17 +116,19 @@ class ModelCLR(nn.Module):
         https://www.sbert.net
         """
         outputs = self.bert_model(**encoded_inputs)
-        
-        with torch.no_grad():
-            sentence_embeddings = self.mean_pooling(outputs, encoded_inputs['attention_mask']).float()
-            x = self.bert_l1(sentence_embeddings)
-            x = F.relu(x)
-            out_emb = self.bert_l2(x)
+
+        # sentence_embeddings, _ = torch.max(outputs.last_hidden_state, dim=1)
+        sentence_embeddings = self.max_pooling(
+            outputs, encoded_inputs["attention_mask"]
+        ).float()  # .half()
+        # If you are running it locally, please change .float() to .half()
+        x = self.bert_l1(sentence_embeddings)
+        x = F.relu(x)
+        out_emb = self.bert_l2(x)
 
         return out_emb
 
     def forward(self, xis, encoded_inputs):
-
         h, zis = self.image_encoder(xis)
 
         zls = self.text_encoder(encoded_inputs)

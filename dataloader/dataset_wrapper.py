@@ -6,7 +6,7 @@ from dataloader.gaussian_blur import GaussianBlur
 from torchvision import datasets
 from .dataset import ClrDataset
 
-np.random.seed(0)
+np.random.seed(42)
 
 
 class DataSetWrapper(object):
@@ -58,16 +58,49 @@ class DataSetWrapper(object):
         # get a set of data augmentation transformations as described in the SimCLR paper.
         color_jitter = transforms.ColorJitter(0.8 * self.s, 0.8 * self.s, 0.8 * self.s, 0.2 * self.s)
         data_transforms = transforms.Compose([
-                                              transforms.Resize((self.input_shape[0], self.input_shape[1])),
-                                              transforms.RandomResizedCrop(size=self.input_shape[0], scale=(0.8, 1.0)),
-                                              transforms.RandomHorizontalFlip(),
+                                              transforms.RandomResizedCrop(size=self.input_shape[0], scale=(0.6, 1.0)),
+                                              transforms.RandomHorizontalFlip(p=0.5),
+                                              transforms.RandomAffine(degrees=(-20,20),translate=(0.1,0.1), scale=(0.95,1.05)),
+                                              transforms.ColorJitter(brightness=(0.6,1.4), contrast=(0.6,1.4), saturation=0, hue=0),
                                             #   transforms.RandomApply([color_jitter], p=0.8),
-                                              transforms.RandomGrayscale(p=0.2),
-                                            #   GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
+                                            #   transforms.RandomGrayscale(p=0.2),
+                                              GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
+                                              transforms.Resize((self.input_shape[0], self.input_shape[1])), # transforms.Scale((self.input_shape[0], self.input_shape[1]))
                                               transforms.ToTensor(),
                                               transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
                                               ])
         return data_transforms
+
+    # def get_train_validation_data_loaders(self, train_dataset):
+    #     # obtain training indices that will be used for validation
+    #     num_train = len(train_dataset)
+    #     indices = list(range(num_train))
+    #     np.random.shuffle(indices)
+
+    #     split = int(np.floor(self.valid_size * num_train))
+    #     train_idx, valid_idx = indices[split:], indices[:split]
+
+    #     # define samplers for obtaining training and validation batches
+    #     train_sampler = SubsetRandomSampler(train_idx)
+    #     valid_sampler = SubsetRandomSampler(valid_idx)
+
+    #     train_loader = DataLoader(
+    #         train_dataset,
+    #         batch_size=self.batch_size,
+    #         sampler=train_sampler,
+    #         num_workers=self.num_workers,
+    #         drop_last=True,
+    #         shuffle=False,
+    #     )
+
+    #     valid_loader = DataLoader(
+    #         train_dataset,
+    #         batch_size=self.batch_size,
+    #         sampler=valid_sampler,
+    #         num_workers=self.num_workers,
+    #         drop_last=True,
+    #     )
+    #     return train_loader, valid_loader
 
     def get_train_validation_data_loaders(self, train_dataset):
         # obtain training indices that will be used for validation
@@ -75,7 +108,7 @@ class DataSetWrapper(object):
         indices = list(range(num_train))
         np.random.shuffle(indices)
 
-        split = int(np.floor(self.valid_size * num_train))
+        split = min(5000, int(np.floor(self.valid_size * num_train)))
         train_idx, valid_idx = indices[split:], indices[:split]
 
         # define samplers for obtaining training and validation batches

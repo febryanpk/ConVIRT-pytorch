@@ -1,7 +1,5 @@
-/__pycache__
-/runs
-/apex
-/.vscode
-/dataloader/__pycache__
-/loss/__pycache__
-/models/__pycache__
+__pycache__
+datasets
+notebook
+full_csv
+runs

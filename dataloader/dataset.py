@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 from torch.utils.data import Dataset
 import pandas as pd
@@ -52,6 +53,7 @@ class ClrDataset(Dataset):
         if self.input_shape[2] == 3:
             image = image.convert('RGB')
         
+        image.thumbnail((256, 256), Image.BILINEAR)
 
         #chooosig a phrase
         if not self.text_from_files:
@@ -62,16 +64,37 @@ class ClrDataset(Dataset):
                 ls_text.remove('')
             phrase = random.choice(ls_text)
 
+        # else:
+        #     text_path = os.path.join(self.text_root_dir, 
+        #                              self.clr_frame.iloc[idx, self.text_col]
+        #                             )
+        #     # print(text_path)
+        #     with open(text_path) as f:
+        #         content = f.readlines()
+        #     content = content[0].replace("\n", "")
+        #     ls_text = content.split(".")
+        #     if '' in ls_text:
+        #         ls_text.remove('')
+        #     phrase = random.choice(ls_text)
+
         else:
-            text_path = os.path.join(self.text_root_dir, 
-                                     self.clr_frame.iloc[idx, self.text_col]
-                                    )
+            text_path = os.path.join(
+                self.text_root_dir, self.clr_frame.iloc[idx, self.text_col]
+            )
+            # print(text_path)
             with open(text_path) as f:
-                content = f.readlines()
-            content = content[0].replace("\n", "")
-            ls_text = content.split(".")
-            if '' in ls_text:
-                ls_text.remove('')
+                content = f.read()
+            content = (
+                " ".join(content.split()).replace("\n", "").strip()
+            )  # Removes extra spaces and trims
+            ls_text = re.split(r"(?<!\d)\. ", content)
+            ls_text = [
+                sentence.strip()
+                for sentence in ls_text
+                if sentence.strip() and not sentence.strip().isdigit()
+            ]
+            if "" in ls_text:
+                ls_text.remove("")
             phrase = random.choice(ls_text)
 
 
